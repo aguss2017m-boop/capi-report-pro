@@ -6,10 +6,7 @@ import {
   RefreshCw, 
   Activity, 
   Wifi,
-  Plus,
   Phone,
-  Save,
-  HelpCircle,
   Send,
   DollarSign,
   User,
@@ -20,6 +17,17 @@ import {
   GitCompare,
   Loader2
 } from 'lucide-react';
+import {
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer
+} from 'recharts';
 import { supabase } from './supabase';
 
 function DatePickerPopover({ value, onChange, placeholder = "dd/mm/aaaa" }) {
@@ -162,7 +170,7 @@ function DatePickerPopover({ value, onChange, placeholder = "dd/mm/aaaa" }) {
 }
 
 export default function Dashboard() {
-  const [activeTab, setActiveTab] = useState('registrar');
+  const [activeTab, setActiveTab] = useState('registros');
   const [timeFilter, setTimeFilter] = useState('mes');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -187,7 +195,6 @@ export default function Dashboard() {
     ip: ''
   });
 
-  const [repartoMode, setRepartoMode] = useState('rotativa');
   const [lineas, setLineas] = useState([
     { id: 1, numero: '+54 9 11 1234-5678', activa: true },
     { id: 2, numero: '+54 9 11 8765-4321', activa: true }
@@ -232,6 +239,40 @@ export default function Dashboard() {
       tasaCierre: tasa,
       totalConvertido: `$${sumaMonto.toLocaleString('es-AR')}`
     };
+  }, [ventas]);
+
+  // Agrupamiento de ventas por día para los dos gráficos
+  const chartData = useMemo(() => {
+    const map = {};
+    const sorted = [...ventas].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+    sorted.forEach((item) => {
+      const d = new Date(item.created_at);
+      const day = String(d.getDate()).padStart(2, '0');
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const key = `${day}/${month}`;
+
+      if (!map[key]) {
+        map[key] = { fecha: key, ingresos: 0, codigos: 0, convertidas: 0 };
+      }
+      map[key].codigos += 1;
+      if (item.enviado_a_meta) {
+        map[key].convertidas += 1;
+        map[key].ingresos += Number(item.monto) || 0;
+      }
+    });
+
+    const result = Object.values(map);
+
+    // Si hay muy pocos registros, agregar relleno para mantener la escala visual
+    if (result.length === 1) {
+      return [
+        { fecha: '', ingresos: 0, codigos: 0, convertidas: 0 },
+        result[0],
+        { fecha: ' ', ingresos: 0, codigos: 0, convertidas: 0 }
+      ];
+    }
+    return result;
   }, [ventas]);
 
   const matchQualityScore = useMemo(() => {
@@ -283,6 +324,7 @@ export default function Dashboard() {
           ciudad: '',
           ip: ''
         });
+        setActiveTab('registros');
       }
     } catch (err) {
       alert('Error inesperado: ' + err.message);
@@ -648,6 +690,75 @@ export default function Dashboard() {
             </div>
           </div>
 
+          {/* Sección de Gráficos */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            {/* Gráfico 1: Ingresos por día */}
+            <div className="bg-[#12141a] p-6 rounded-2xl border border-gray-800/80 shadow-xl">
+              <h3 className="text-sm font-bold text-gray-300 uppercase tracking-wider mb-4">
+                Ingresos por día
+              </h3>
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="colorIngresos" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.6}/>
+                        <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
+                    <XAxis dataKey="fecha" stroke="#6b7280" fontSize={11} tickLine={false} />
+                    <YAxis stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: '#0f172a', borderColor: '#374151', borderRadius: '0.75rem', fontSize: '12px' }}
+                      itemStyle={{ color: '#fbbf24' }}
+                      formatter={(val) => [`$${Number(val).toLocaleString('es-AR')}`, 'Ingresos']}
+                    />
+                    <Area 
+                      type="monotone" 
+                      dataKey="ingresos" 
+                      stroke="#fbbf24" 
+                      strokeWidth={2.5} 
+                      fillOpacity={1} 
+                      fill="url(#colorIngresos)" 
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Gráfico 2: Códigos vs Conversiones por día */}
+            <div className="bg-[#12141a] p-6 rounded-2xl border border-gray-800/80 shadow-xl">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold text-gray-300 uppercase tracking-wider">
+                  Códigos vs Conversiones por día
+                </h3>
+                <div className="flex items-center gap-3 text-xs">
+                  <span className="flex items-center gap-1.5 text-blue-400 font-medium">
+                    <span className="w-2.5 h-2.5 rounded-sm bg-blue-500"></span> Códigos totales
+                  </span>
+                  <span className="flex items-center gap-1.5 text-emerald-400 font-medium">
+                    <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500"></span> Convertidas
+                  </span>
+                </div>
+              </div>
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
+                    <XAxis dataKey="fecha" stroke="#6b7280" fontSize={11} tickLine={false} />
+                    <YAxis stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: '#0f172a', borderColor: '#374151', borderRadius: '0.75rem', fontSize: '12px' }}
+                    />
+                    <Bar dataKey="codigos" name="Códigos totales" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="convertidas" name="Convertidas" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+
           <div className="bg-[#12141a] p-6 rounded-2xl border border-gray-800/80">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
               <h2 className="text-base font-black text-yellow-400 flex items-center gap-2 tracking-wide uppercase">
@@ -733,7 +844,7 @@ export default function Dashboard() {
                           </span>
                         </td>
                         <td className="p-3 font-bold text-white">
-                          ${Number(item.monto).toLocaleString('es-AR')} <span className="text-[10px] text-gray-400">{item.moneda}</span>
+                          ${Number(item.monto).toLocaleString('es-AR')} <span className="text-[10px] text-gray-400">{item.moneda || 'ARS'}</span>
                         </td>
                       </tr>
                     ))
@@ -746,88 +857,46 @@ export default function Dashboard() {
       )}
 
       {activeTab === 'lineas' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fadeIn">
-          <div className="lg:col-span-2 bg-[#12141a] p-6 rounded-2xl border border-gray-800/80">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-lg font-black text-white flex items-center gap-2">
-                <Phone className="w-5 h-5 text-amber-400" />
-                Líneas de WhatsApp
-              </h2>
+        <div className="bg-[#12141a] p-6 md:p-8 rounded-2xl border border-gray-800/80 shadow-xl max-w-2xl animate-fadeIn">
+          <h2 className="text-base font-bold text-white uppercase tracking-wider mb-6 flex items-center gap-2">
+            <Phone className="w-4 h-4 text-amber-400" />
+            Gestión de Líneas de WhatsApp
+          </h2>
 
-              <button className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-yellow-400 to-amber-500 text-black font-extrabold text-xs rounded-xl shadow-[0_0_15px_rgba(251,191,36,0.3)] hover:scale-105 transition-all">
-                <Save className="w-3.5 h-3.5" />
-                Guardar cambios
-              </button>
-            </div>
+          <div className="flex gap-2 mb-6">
+            <input
+              type="text"
+              placeholder="+54 9 11 ..."
+              value={nuevaLinea}
+              onChange={(e) => setNuevaLinea(e.target.value)}
+              className="flex-1 bg-[#07080c] border border-gray-800 rounded-xl px-4 py-2.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-amber-400"
+            />
+            <button
+              onClick={handleAgregarLinea}
+              className="px-4 py-2.5 bg-gradient-to-r from-yellow-300 to-amber-400 text-black font-extrabold text-xs uppercase rounded-xl hover:brightness-110 transition-all"
+            >
+              Agregar
+            </button>
+          </div>
 
-            <p className="text-xs text-gray-400 mb-6">
-              Estos números se aplican a todos los botones de WhatsApp de la landing.
-            </p>
-
-            <div className="mb-6">
-              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-2">
-                MODO DE REPARTO
-              </label>
-              <div className="flex gap-2">
+          <div className="space-y-3">
+            {lineas.map((linea) => (
+              <div 
+                key={linea.id} 
+                className="flex items-center justify-between p-3.5 bg-[#07080c] rounded-xl border border-gray-800"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <span className="font-mono text-xs text-gray-200">{linea.numero}</span>
+                </div>
                 <button
-                  type="button"
-                  onClick={() => setRepartoMode('rotativa')}
-                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
-                    repartoMode === 'rotativa'
-                      ? 'bg-amber-400 text-black shadow-[0_0_10px_rgba(251,191,36,0.4)]'
-                      : 'bg-[#07080c] text-gray-400 border border-gray-800'
-                  }`}
+                  onClick={() => handleEliminarLinea(linea.id)}
+                  className="p-1.5 text-gray-500 hover:text-red-400 transition-colors"
                 >
-                  Rotativa (Equitativo)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRepartoMode('prioridad')}
-                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
-                    repartoMode === 'prioridad'
-                      ? 'bg-amber-400 text-black shadow-[0_0_10px_rgba(251,191,36,0.4)]'
-                      : 'bg-[#07080c] text-gray-400 border border-gray-800'
-                  }`}
-                >
-                  Prioridad
+                  <Trash2 className="w-4 h-4" />
                 </button>
               </div>
-            </div>
-
-            <div className="space-y-3 mb-6">
-              {lineas.map((linea) => (
-                <div key={linea.id} className="flex items-center justify-between p-3.5 bg-[#07080c] border border-gray-800 rounded-xl">
-                  <div className="flex items-center gap-3">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
-                    <span className="text-xs font-mono font-medium text-white">{linea.numero}</span>
-                  </div>
-                  <button 
-                    onClick={() => handleEliminarLinea(linea.id)}
-                    className="text-gray-500 hover:text-red-400 p-1.5 transition-colors"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="+54 9 11 ..."
-                value={nuevaLinea}
-                onChange={(e) => setNuevaLinea(e.target.value)}
-                className="flex-1 bg-[#07080c] border border-gray-800 rounded-xl px-4 py-2.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-amber-400"
-              />
-              <button
-                type="button"
-                onClick={handleAgregarLinea}
-                className="px-4 py-2.5 bg-amber-400 text-black text-xs font-bold rounded-xl hover:bg-amber-300 transition-colors flex items-center gap-1.5"
-              >
-                <Plus className="w-4 h-4" />
-                Agregar
-              </button>
-            </div>
+            ))}
           </div>
         </div>
       )}
