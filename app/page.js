@@ -6,7 +6,10 @@ import {
   RefreshCw, 
   Activity, 
   Wifi,
+  Plus,
   Phone,
+  Save,
+  HelpCircle,
   Send,
   DollarSign,
   User,
@@ -17,16 +20,9 @@ import {
   GitCompare,
   Loader2
 } from 'lucide-react';
-import {
-  AreaChart,
-  Area,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer
+import { 
+  LineChart, Line, BarChart, Bar, XAxis, YAxis, 
+  Tooltip, ResponsiveContainer, Legend 
 } from 'recharts';
 import { supabase } from './supabase';
 
@@ -170,7 +166,7 @@ function DatePickerPopover({ value, onChange, placeholder = "dd/mm/aaaa" }) {
 }
 
 export default function Dashboard() {
-  const [activeTab, setActiveTab] = useState('registros');
+  const [activeTab, setActiveTab] = useState('registrar');
   const [timeFilter, setTimeFilter] = useState('mes');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -195,6 +191,7 @@ export default function Dashboard() {
     ip: ''
   });
 
+  const [repartoMode, setRepartoMode] = useState('rotativa');
   const [lineas, setLineas] = useState([
     { id: 1, numero: '+54 9 11 1234-5678', activa: true },
     { id: 2, numero: '+54 9 11 8765-4321', activa: true }
@@ -225,12 +222,49 @@ export default function Dashboard() {
     cargarVentas();
   }, []);
 
+  const ventasFiltradasPorTiempo = useMemo(() => {
+    const ahora = new Date();
+    ahora.setHours(23, 59, 59, 999);
+
+    return ventas.filter(v => {
+      const fechaVenta = new Date(v.created_at);
+      
+      if (timeFilter === 'hoy') {
+        const inicioHoy = new Date();
+        inicioHoy.setHours(0, 0, 0, 0);
+        return fechaVenta >= inicioHoy && fechaVenta <= ahora;
+      }
+      if (timeFilter === '7 días') {
+        const limite = new Date();
+        limite.setDate(limite.getDate() - 7);
+        limite.setHours(0, 0, 0, 0);
+        return fechaVenta >= limite && fechaVenta <= ahora;
+      }
+      if (timeFilter === '15 días') {
+        const limite = new Date();
+        limite.setDate(limite.getDate() - 15);
+        limite.setHours(0, 0, 0, 0);
+        return fechaVenta >= limite && fechaVenta <= ahora;
+      }
+      if (timeFilter === 'mes') {
+        const limite = new Date();
+        limite.setDate(limite.getDate() - 30);
+        limite.setHours(0, 0, 0, 0);
+        return fechaVenta >= limite && fechaVenta <= ahora;
+      }
+      if (timeFilter === 'personalizado' && startDate && endDate) {
+        return fechaVenta >= new Date(startDate) && fechaVenta <= new Date(endDate + 'T23:59:59');
+      }
+      return true;
+    });
+  }, [ventas, timeFilter, startDate, endDate]);
+
   const stats = useMemo(() => {
-    const total = ventas.length;
-    const conv = ventas.filter(v => v.enviado_a_meta).length;
+    const total = ventasFiltradasPorTiempo.length;
+    const conv = ventasFiltradasPorTiempo.filter(v => v.enviado_a_meta).length;
     const pend = total - conv;
     const tasa = total > 0 ? `${Math.round((conv / total) * 100)}%` : '0%';
-    const sumaMonto = ventas.reduce((acc, curr) => acc + (Number(curr.monto) || 0), 0);
+    const sumaMonto = ventasFiltradasPorTiempo.reduce((acc, curr) => acc + (Number(curr.monto) || 0), 0);
     
     return {
       codigosTotales: total,
@@ -239,41 +273,40 @@ export default function Dashboard() {
       tasaCierre: tasa,
       totalConvertido: `$${sumaMonto.toLocaleString('es-AR')}`
     };
-  }, [ventas]);
+  }, [ventasFiltradasPorTiempo]);
 
-  // Agrupamiento de ventas por día para los dos gráficos
-  const chartData = useMemo(() => {
-    const map = {};
-    const sorted = [...ventas].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  const chartDataReales = useMemo(() => {
+    const agrupado = {};
+    
+    let diasAEvaluar = 30;
+    if (timeFilter === 'hoy') diasAEvaluar = 1;
+    if (timeFilter === '7 días') diasAEvaluar = 7;
+    if (timeFilter === '15 días') diasAEvaluar = 15;
 
-    sorted.forEach((item) => {
-      const d = new Date(item.created_at);
-      const day = String(d.getDate()).padStart(2, '0');
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const key = `${day}/${month}`;
+    for (let i = diasAEvaluar - 1; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dia = String(d.getDate()).padStart(2, '0');
+      const mes = String(d.getMonth() + 1).padStart(2, '0');
+      const key = `${dia}/${mes}`;
+      agrupado[key] = { date: key, ingresos: 0, codigos: 0, convertidas: 0 };
+    }
 
-      if (!map[key]) {
-        map[key] = { fecha: key, ingresos: 0, codigos: 0, convertidas: 0 };
-      }
-      map[key].codigos += 1;
-      if (item.enviado_a_meta) {
-        map[key].convertidas += 1;
-        map[key].ingresos += Number(item.monto) || 0;
+    ventasFiltradasPorTiempo.forEach((v) => {
+      const fechaObj = new Date(v.created_at);
+      const dia = String(fechaObj.getDate()).padStart(2, '0');
+      const mes = String(fechaObj.getMonth() + 1).padStart(2, '0');
+      const key = `${dia}/${mes}`;
+
+      if (agrupado[key]) {
+        agrupado[key].ingresos += Number(v.monto) || 0;
+        agrupado[key].codigos += 1;
+        agrupado[key].convertidas += 1;
       }
     });
 
-    const result = Object.values(map);
-
-    // Si hay muy pocos registros, agregar relleno para mantener la escala visual
-    if (result.length === 1) {
-      return [
-        { fecha: '', ingresos: 0, codigos: 0, convertidas: 0 },
-        result[0],
-        { fecha: ' ', ingresos: 0, codigos: 0, convertidas: 0 }
-      ];
-    }
-    return result;
-  }, [ventas]);
+    return Object.values(agrupado);
+  }, [ventasFiltradasPorTiempo, timeFilter]);
 
   const matchQualityScore = useMemo(() => {
     const fields = ['nombre', 'telefono', 'email', 'ciudad', 'ip'];
@@ -324,7 +357,6 @@ export default function Dashboard() {
           ciudad: '',
           ip: ''
         });
-        setActiveTab('registros');
       }
     } catch (err) {
       alert('Error inesperado: ' + err.message);
@@ -344,7 +376,7 @@ export default function Dashboard() {
     setLineas(prev => prev.filter(item => item.id !== id));
   };
 
-  const ventasFiltradas = ventas.filter((v) => {
+  const ventasFiltradasTabla = ventas.filter((v) => {
     const query = searchQuery.toLowerCase();
     return (
       v.codigo_cliente?.toLowerCase().includes(query) ||
@@ -361,15 +393,9 @@ export default function Dashboard() {
           <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-yellow-500 via-amber-300 to-yellow-200 flex items-center justify-center font-black text-black text-xl shadow-[0_0_25px_rgba(251,191,36,0.85)] border-2 border-yellow-200">
             OB
           </div>
-          <span className="text-lg md:text-xl font-black tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 via-amber-400 to-yellow-500 drop-shadow-[0_0_12px_rgba(251,191,36,0.7)] uppercase">
+          <span className="text-lg md:text-xl font-black tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 via-amber-400 to-yellow-500 uppercase">
             ONLINE BET - REPORT PRO
           </span>
-        </div>
-
-        <div className="flex items-center gap-2 text-xs text-gray-400">
-          <button className="hover:text-amber-400 transition-colors flex items-center gap-1 font-medium">
-            <span>Cerrar sesión</span>
-          </button>
         </div>
       </div>
 
@@ -378,14 +404,14 @@ export default function Dashboard() {
           Panel de Conversiones
         </h1>
         <p className="text-sm text-gray-400">
-          Reportá ventas de WhatsApp a Meta sin tocar la consola.
+          Reportá ventas de WhatsApp a Meta conectado a Supabase.
         </p>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 mb-8">
         <button 
           onClick={() => setActiveTab('registrar')}
-          className={`px-5 py-2.5 rounded-xl text-xs font-extrabold tracking-wide uppercase transition-all duration-300 flex items-center gap-2 ${
+          className={`px-5 py-2.5 rounded-xl text-xs font-extrabold uppercase transition-all duration-300 flex items-center gap-2 ${
             activeTab === 'registrar' 
               ? 'bg-gradient-to-r from-yellow-300 via-amber-400 to-yellow-500 text-black shadow-[0_0_20px_rgba(251,191,36,0.6)] scale-105' 
               : 'bg-[#12141a] text-gray-400 border border-gray-800/80 hover:border-amber-500/50 hover:text-amber-300'
@@ -397,19 +423,19 @@ export default function Dashboard() {
 
         <button 
           onClick={() => setActiveTab('registros')}
-          className={`px-5 py-2.5 rounded-xl text-xs font-extrabold tracking-wide uppercase transition-all duration-300 flex items-center gap-2 ${
+          className={`px-5 py-2.5 rounded-xl text-xs font-extrabold uppercase transition-all duration-300 flex items-center gap-2 ${
             activeTab === 'registros' 
               ? 'bg-gradient-to-r from-yellow-300 via-amber-400 to-yellow-500 text-black shadow-[0_0_20px_rgba(251,191,36,0.6)] scale-105' 
               : 'bg-[#12141a] text-gray-400 border border-gray-800/80 hover:border-amber-500/50 hover:text-amber-300'
           }`}
         >
           <Activity className="w-3.5 h-3.5" />
-          Registros ({stats.codigosTotales})
+          Registros ({ventas.length})
         </button>
 
         <button 
           onClick={() => setActiveTab('lineas')}
-          className={`px-5 py-2.5 rounded-xl text-xs font-extrabold tracking-wide uppercase transition-all duration-300 flex items-center gap-2 ${
+          className={`px-5 py-2.5 rounded-xl text-xs font-extrabold uppercase transition-all duration-300 flex items-center gap-2 ${
             activeTab === 'lineas' 
               ? 'bg-gradient-to-r from-yellow-300 via-amber-400 to-yellow-500 text-black shadow-[0_0_20px_rgba(251,191,36,0.6)] scale-105' 
               : 'bg-[#12141a] text-gray-400 border border-gray-800/80 hover:border-amber-500/50 hover:text-amber-300'
@@ -422,7 +448,6 @@ export default function Dashboard() {
 
       {activeTab === 'registrar' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fadeIn">
-          
           <div className="lg:col-span-2 bg-[#12141a] p-6 md:p-8 rounded-2xl border border-gray-800/80 shadow-xl">
             <div className="flex items-center gap-3 mb-6">
               <span className="w-7 h-7 rounded-full bg-amber-400 text-black font-black flex items-center justify-center text-xs">
@@ -434,7 +459,6 @@ export default function Dashboard() {
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-5">
-              
               <div>
                 <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">
                   CÓDIGO DEL CLIENTE (WHATSAPP) <span className="text-amber-400">*</span>
@@ -446,7 +470,7 @@ export default function Dashboard() {
                     name="codigo"
                     value={formData.codigo}
                     onChange={handleInputChange}
-                    placeholder="Ej: LBX3 (pegá el código y autocompletamos IP y ubicación)"
+                    placeholder="Ej: LBX3"
                     required
                     className="w-full bg-[#07080c] border border-gray-800 rounded-xl pl-10 pr-4 py-3 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-amber-400 transition-colors"
                   />
@@ -512,7 +536,7 @@ export default function Dashboard() {
                       name="telefono"
                       value={formData.telefono}
                       onChange={handleInputChange}
-                      placeholder="+54 9 260 450..."
+                      placeholder="+54 9 260..."
                       className="w-full bg-[#07080c] border border-gray-800 rounded-xl px-3 py-2 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-amber-400"
                     />
                   </div>
@@ -574,7 +598,7 @@ export default function Dashboard() {
               </button>
             </form>
           </div>
-
+          
           <div className="bg-[#12141a] p-6 rounded-2xl border border-gray-800/80 shadow-xl h-fit">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-xs font-bold text-gray-300 uppercase tracking-wider">
@@ -608,48 +632,43 @@ export default function Dashboard() {
             </div>
 
             <p className="text-[11px] text-gray-500 leading-relaxed border-t border-gray-800/80 pt-4">
-              Completar estos datos envía una señal más fuerte a Meta. Un score de <strong className="text-gray-400">60% o más</strong> puede reducir tu costo por compra.
+              Completar estos datos envía una señal más fuerte a Meta.
             </p>
           </div>
-
         </div>
       )}
 
       {activeTab === 'registros' && (
         <>
           <div className="flex flex-wrap items-center gap-3 mb-6">
-            {['Hoy', '7 días', '15 días', 'Mes', 'Personalizado'].map((filter) => {
-              const isSelected = timeFilter === filter.toLowerCase();
+            {[
+              { id: 'hoy', label: 'Hoy' },
+              { id: '7 días', label: '7 Días' },
+              { id: '15 días', label: '15 Días' },
+              { id: 'mes', label: 'Mes' },
+              { id: 'personalizado', label: 'Personalizado' }
+            ].map((filter) => {
+              const isSelected = timeFilter === filter.id;
               return (
                 <button
-                  key={filter}
-                  onClick={() => setTimeFilter(filter.toLowerCase())}
+                  key={filter.id}
+                  onClick={() => setTimeFilter(filter.id)}
                   className={`px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all duration-200 ${
                     isSelected
                       ? 'bg-gradient-to-r from-yellow-300 via-yellow-400 to-amber-400 text-black border border-yellow-200 shadow-[0_0_15px_rgba(250,204,21,0.4)] scale-105'
                       : 'bg-[#12141a] text-gray-400 border border-gray-800 hover:border-amber-500/40 hover:text-amber-300'
                   }`}
                 >
-                  {filter}
+                  {filter.label}
                 </button>
               );
             })}
 
             {timeFilter === 'personalizado' && (
               <div className="flex flex-wrap items-center gap-2 animate-fadeIn pl-2 border-l border-gray-800">
-                <DatePickerPopover
-                  value={startDate}
-                  onChange={setStartDate}
-                  placeholder="dd/mm/aaaa"
-                />
-
+                <DatePickerPopover value={startDate} onChange={setStartDate} placeholder="dd/mm/aaaa" />
                 <span className="text-xs text-gray-500 font-bold">→</span>
-
-                <DatePickerPopover
-                  value={endDate}
-                  onChange={setEndDate}
-                  placeholder="dd/mm/aaaa"
-                />
+                <DatePickerPopover value={endDate} onChange={setEndDate} placeholder="dd/mm/aaaa" />
 
                 <button
                   type="button"
@@ -668,91 +687,57 @@ export default function Dashboard() {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4 mb-8">
-            <div className="bg-[#12141a] p-4 rounded-xl border border-gray-800/80 hover:border-amber-500/30 transition-all group">
+            <div className="bg-[#12141a] p-4 rounded-xl border border-orange-500/40 shadow-[0_0_15px_rgba(249,115,22,0.15)] transition-all">
               <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-1">CÓDIGOS TOTALES</p>
-              <p className="text-2xl font-black text-white group-hover:text-amber-400 transition-colors">{stats.codigosTotales}</p>
+              <p className="text-2xl font-black text-white">{stats.codigosTotales}</p>
             </div>
-            <div className="bg-[#12141a] p-4 rounded-xl border border-gray-800/80 hover:border-emerald-500/30 transition-all group">
+            <div className="bg-[#12141a] p-4 rounded-xl border border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.15)] transition-all">
               <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-1">CONVERTIDAS</p>
-              <p className="text-2xl font-black text-emerald-400">{stats.convertidas}</p>
+              <p className="text-2xl font-black text-white">{stats.convertidas}</p>
             </div>
-            <div className="bg-[#12141a] p-4 rounded-xl border border-gray-800/80 hover:border-amber-500/30 transition-all group">
+            <div className="bg-[#12141a] p-4 rounded-xl border border-yellow-600/40 shadow-[0_0_15px_rgba(202,138,4,0.15)] transition-all">
               <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-1">PENDIENTES</p>
-              <p className="text-2xl font-black text-amber-400">{stats.pendientes}</p>
+              <p className="text-2xl font-black text-white">{stats.pendientes}</p>
             </div>
-            <div className="bg-[#12141a] p-4 rounded-xl border border-gray-800/80 hover:border-blue-500/30 transition-all group">
+            <div className="bg-[#12141a] p-4 rounded-xl border border-blue-500/40 shadow-[0_0_15px_rgba(59,130,246,0.15)] transition-all">
               <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-1">TASA DE CIERRE</p>
-              <p className="text-2xl font-black text-blue-400">{stats.tasaCierre}</p>
+              <p className="text-2xl font-black text-white">{stats.tasaCierre}</p>
             </div>
-            <div className="bg-[#12141a] p-4 rounded-xl border border-gray-800/80 hover:border-emerald-500/30 transition-all group">
+            <div className="bg-[#12141a] p-4 rounded-xl border border-purple-500/40 shadow-[0_0_15px_rgba(168,85,247,0.15)] transition-all">
               <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-1">TOTAL CONVERTIDO</p>
-              <p className="text-2xl font-black text-emerald-400">{stats.totalConvertido}</p>
+              <p className="text-2xl font-black text-white">{stats.totalConvertido}</p>
             </div>
           </div>
 
-          {/* Sección de Gráficos */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-            {/* Gráfico 1: Ingresos por día */}
-            <div className="bg-[#12141a] p-6 rounded-2xl border border-gray-800/80 shadow-xl">
-              <h3 className="text-sm font-bold text-gray-300 uppercase tracking-wider mb-4">
-                Ingresos por día
-              </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+            <div className="bg-[#12141a] p-5 rounded-2xl border border-gray-800/80">
+              <h3 className="text-xs font-bold mb-6 text-gray-300 uppercase tracking-wider">Ingresos por día</h3>
               <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="colorIngresos" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.6}/>
-                        <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
-                    <XAxis dataKey="fecha" stroke="#6b7280" fontSize={11} tickLine={false} />
-                    <YAxis stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} />
+                  <LineChart data={chartDataReales} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                    <XAxis dataKey="date" stroke="#4b5563" fontSize={10} tickMargin={10} />
+                    <YAxis stroke="#4b5563" fontSize={10} domain={[0, 'auto']} />
                     <Tooltip 
-                      contentStyle={{ backgroundColor: '#0f172a', borderColor: '#374151', borderRadius: '0.75rem', fontSize: '12px' }}
-                      itemStyle={{ color: '#fbbf24' }}
-                      formatter={(val) => [`$${Number(val).toLocaleString('es-AR')}`, 'Ingresos']}
+                      contentStyle={{ backgroundColor: '#1e2029', border: '1px solid #374151', borderRadius: '8px', color: '#fff' }} 
+                      itemStyle={{ color: '#fbbf24', fontWeight: 'bold' }} 
                     />
-                    <Area 
-                      type="monotone" 
-                      dataKey="ingresos" 
-                      stroke="#fbbf24" 
-                      strokeWidth={2.5} 
-                      fillOpacity={1} 
-                      fill="url(#colorIngresos)" 
-                    />
-                  </AreaChart>
+                    <Line type="monotone" dataKey="ingresos" name="Ingresos" stroke="#fbbf24" strokeWidth={3} dot={{ r: 4, fill: '#fbbf24' }} activeDot={{ r: 6, fill: '#fbbf24' }} />
+                  </LineChart>
                 </ResponsiveContainer>
               </div>
             </div>
 
-            {/* Gráfico 2: Códigos vs Conversiones por día */}
-            <div className="bg-[#12141a] p-6 rounded-2xl border border-gray-800/80 shadow-xl">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-bold text-gray-300 uppercase tracking-wider">
-                  Códigos vs Conversiones por día
-                </h3>
-                <div className="flex items-center gap-3 text-xs">
-                  <span className="flex items-center gap-1.5 text-blue-400 font-medium">
-                    <span className="w-2.5 h-2.5 rounded-sm bg-blue-500"></span> Códigos totales
-                  </span>
-                  <span className="flex items-center gap-1.5 text-emerald-400 font-medium">
-                    <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500"></span> Convertidas
-                  </span>
-                </div>
-              </div>
+            <div className="bg-[#12141a] p-5 rounded-2xl border border-gray-800/80">
+              <h3 className="text-xs font-bold mb-6 text-gray-300 uppercase tracking-wider">Códigos vs Conversiones por día</h3>
               <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
-                    <XAxis dataKey="fecha" stroke="#6b7280" fontSize={11} tickLine={false} />
-                    <YAxis stroke="#6b7280" fontSize={11} tickLine={false} axisLine={false} />
-                    <Tooltip 
-                      contentStyle={{ backgroundColor: '#0f172a', borderColor: '#374151', borderRadius: '0.75rem', fontSize: '12px' }}
-                    />
-                    <Bar dataKey="codigos" name="Códigos totales" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="convertidas" name="Convertidas" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  <BarChart data={chartDataReales} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                    <XAxis dataKey="date" stroke="#4b5563" fontSize={10} tickMargin={10} />
+                    <YAxis stroke="#4b5563" fontSize={10} allowDecimals={false} domain={[0, 'auto']} />
+                    <Tooltip contentStyle={{ backgroundColor: '#1e2029', border: '1px solid #374151', borderRadius: '8px', color: '#fff' }} />
+                    <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+                    <Bar dataKey="codigos" name="Códigos totales" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={8} />
+                    <Bar dataKey="convertidas" name="Convertidas" fill="#10b981" radius={[4, 4, 0, 0]} barSize={8} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -785,11 +770,6 @@ export default function Dashboard() {
                   <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
                   Actualizar
                 </button>
-
-                <div className="flex items-center gap-2 px-3.5 py-2 bg-emerald-950/40 border border-emerald-500/30 rounded-xl text-xs text-emerald-400 font-bold">
-                  <Wifi className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-                  Sincronización Activa
-                </div>
               </div>
             </div>
 
@@ -814,14 +794,14 @@ export default function Dashboard() {
                         </div>
                       </td>
                     </tr>
-                  ) : ventasFiltradas.length === 0 ? (
+                  ) : ventasFiltradasTabla.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="p-10 text-center text-gray-500 font-medium">
                         No hay registros guardados en la base de datos
                       </td>
                     </tr>
                   ) : (
-                    ventasFiltradas.map((item) => (
+                    ventasFiltradasTabla.map((item) => (
                       <tr key={item.id} className="hover:bg-[#12141a]/60 transition-colors">
                         <td className="p-3 text-gray-300">
                           {new Date(item.created_at).toLocaleString('es-AR', {
@@ -844,7 +824,7 @@ export default function Dashboard() {
                           </span>
                         </td>
                         <td className="p-3 font-bold text-white">
-                          ${Number(item.monto).toLocaleString('es-AR')} <span className="text-[10px] text-gray-400">{item.moneda || 'ARS'}</span>
+                          ${Number(item.monto).toLocaleString('es-AR')} <span className="text-[10px] text-gray-400">{item.moneda}</span>
                         </td>
                       </tr>
                     ))
@@ -857,50 +837,50 @@ export default function Dashboard() {
       )}
 
       {activeTab === 'lineas' && (
-        <div className="bg-[#12141a] p-6 md:p-8 rounded-2xl border border-gray-800/80 shadow-xl max-w-2xl animate-fadeIn">
-          <h2 className="text-base font-bold text-white uppercase tracking-wider mb-6 flex items-center gap-2">
-            <Phone className="w-4 h-4 text-amber-400" />
-            Gestión de Líneas de WhatsApp
-          </h2>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fadeIn">
+          <div className="lg:col-span-2 bg-[#12141a] p-6 rounded-2xl border border-gray-800/80">
+            <h2 className="text-lg font-black text-white flex items-center gap-2 mb-6">
+              <Phone className="w-5 h-5 text-amber-400" />
+              Líneas de WhatsApp
+            </h2>
 
-          <div className="flex gap-2 mb-6">
-            <input
-              type="text"
-              placeholder="+54 9 11 ..."
-              value={nuevaLinea}
-              onChange={(e) => setNuevaLinea(e.target.value)}
-              className="flex-1 bg-[#07080c] border border-gray-800 rounded-xl px-4 py-2.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-amber-400"
-            />
-            <button
-              onClick={handleAgregarLinea}
-              className="px-4 py-2.5 bg-gradient-to-r from-yellow-300 to-amber-400 text-black font-extrabold text-xs uppercase rounded-xl hover:brightness-110 transition-all"
-            >
-              Agregar
-            </button>
-          </div>
-
-          <div className="space-y-3">
-            {lineas.map((linea) => (
-              <div 
-                key={linea.id} 
-                className="flex items-center justify-between p-3.5 bg-[#07080c] rounded-xl border border-gray-800"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                  <span className="font-mono text-xs text-gray-200">{linea.numero}</span>
+            <div className="space-y-3 mb-6">
+              {lineas.map((linea) => (
+                <div key={linea.id} className="flex items-center justify-between p-3.5 bg-[#07080c] border border-gray-800 rounded-xl">
+                  <div className="flex items-center gap-3">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+                    <span className="text-xs font-mono font-medium text-white">{linea.numero}</span>
+                  </div>
+                  <button 
+                    onClick={() => handleEliminarLinea(linea.id)}
+                    className="text-gray-500 hover:text-red-400 p-1.5 transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
-                <button
-                  onClick={() => handleEliminarLinea(linea.id)}
-                  className="p-1.5 text-gray-500 hover:text-red-400 transition-colors"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
+              ))}
+            </div>
+
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="+54 9 11 ..."
+                value={nuevaLinea}
+                onChange={(e) => setNuevaLinea(e.target.value)}
+                className="flex-1 bg-[#07080c] border border-gray-800 rounded-xl px-4 py-2.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-amber-400"
+              />
+              <button
+                type="button"
+                onClick={handleAgregarLinea}
+                className="px-4 py-2.5 bg-amber-400 text-black text-xs font-bold rounded-xl hover:bg-amber-300 transition-colors flex items-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" />
+                Agregar
+              </button>
+            </div>
           </div>
         </div>
       )}
-
     </div>
   );
 }
